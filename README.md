@@ -14,6 +14,11 @@ so the code quality is questionable and bugs are guaranteed.
 php -f v0.9.php
 ```
 
+### optional map size
+```bash
+php -f v0.9.php 20 10
+```
+
 ## requirements
 - php >= 8.3
 
