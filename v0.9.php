@@ -995,8 +995,8 @@ final class game {
     $mapWidth  = $this->argv[1] ?? CONFIG_MAP_WIDTH;
     $mapHeight = $this->argv[2] ?? CONFIG_MAP_HEIGHT;
     $this->world = new world(
-      width:       $mapWidth,
-      height:      $mapHeight,
+      width:       (int)$mapWidth,
+      height:      (int)$mapHeight,
       spawnRate:   CONFIG_SPAWN_RATE,
       spawnMplier: CONFIG_SPAWN_MPILER,
       entityIdLen: CONFIG_ENTITY_IDLEN
