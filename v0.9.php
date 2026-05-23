@@ -18,8 +18,8 @@ gc_enabled() or gc_enable();
 
 const CONFIG_TITLE_TEXT = "MY WEIRD PHP GAME I v0.9" . PHP_EOL .
                           "Made by ANTIBIOTICS";
-const CONFIG_MAP_HEIGHT = 30;
-const CONFIG_MAP_WIDTH  = 50;
+const CONFIG_MAP_HEIGHT = 15;
+const CONFIG_MAP_WIDTH  = 30;
 const CONFIG_SPAWN_RATE = [  // max 1.0, min 0.0
   "witch" => 0.005,          // spawn at 5/1000 odds
   "ghost" => 0.010,
