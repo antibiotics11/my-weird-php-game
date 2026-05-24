@@ -4,9 +4,6 @@
 /** 2026.05.24
  *
  *  TODO:
- *  - End game when player dies
- *  - Validate player movement
- *  - Implement player attack mechanics
  *  - Optimize terminal rendering
  */
 
@@ -30,6 +27,7 @@ const CONFIG_SPAWN_RATE = [  // max 1.0, min 0.0
   "drug"  => 0.008
 ];
 const CONFIG_SPAWN_MPILER = 1000;
+const CONFIG_SPAWN_INTERV = 5;
 const CONFIG_ENTITY_IDLEN = 10;
 
 
@@ -232,7 +230,7 @@ final class tomb extends entity {
     parent::__construct(
       id:     $id,
       type:   entityType::tomb,
-      hp:     10
+      hp:     5
     );
   }
 }
@@ -434,7 +432,7 @@ final class ghost extends entity {
  */
  
 final class player extends entity {
-  private const int DEFAULT_HP     = 10;
+  private const int DEFAULT_HP     = 30;
   private const int DEFAULT_DAMAGE = 1;
 
   public function __construct(
@@ -457,13 +455,18 @@ final class player extends entity {
       return $pos;
     }
 
-    return match($key) {
+    $nextPos = match($key) {
       keyType::up    => new coordinates($pos->x, $pos->y - 1),
       keyType::down  => new coordinates($pos->x, $pos->y + 1),
       keyType::right => new coordinates($pos->x + 1, $pos->y),
       keyType::left  => new coordinates($pos->x - 1, $pos->y),
       default        => $pos
     };
+
+    return in_array($world->getMap()[$nextPos->y][$nextPos->x]->type, [
+      entityType::barrier,
+      entityType::tomb,
+    ]) ? null : $nextPos;
   }
 }
 
@@ -593,6 +596,7 @@ class world {
   protected random  $random;
   protected array   $idTable;
   protected ?player $playerRef;
+  protected int     $turn;
 
   public function getMap(): array {
     return $this->map;
@@ -611,12 +615,14 @@ class world {
     public readonly int   $height,
     public readonly array $spawnRate   = [],    // max 1.0, min 0.0
     public readonly int   $spawnMplier = 1000,
+    public readonly int   $spawnInterv = 10,
     public readonly int   $entityIdLen = 10
   ) {
-    $this->scanner   = new scanner();
-    $this->random    = new random();
-    $this->idTable   = [];
-    $this->playerRef = null;
+    $this->scanner    = new scanner();
+    $this->random     = new random();
+    $this->idTable    = [];
+    $this->playerRef  = null;
+    $this->turn       = 0;
 
     $this->map = [];
     for ($y = 0; $y < $this->height; $y++) {
@@ -625,6 +631,23 @@ class world {
         $this->map[$y][$x] = null;
       }
     }
+  }
+
+  public function spawnRandom(coordinates $pos, ?string $id = null, array $except = []): void {
+    $types    = entityType::cases();
+    $numTypes = count($types);
+    $retry    = 0;
+
+    do {
+      $retry++;
+      $randomType = $types[$this->random->randomInt(0, $numTypes - 1)];
+    } while (in_array($randomType, $except) && $retry < 5);
+
+    if (in_array($randomType, $except)) {
+      $randomType = entityType::road;
+    }
+
+    $this->spawn($pos, $randomType, $id);
   }
 
   public function spawn(coordinates $pos, entityType $type, ?string $id = null): void {
@@ -691,12 +714,37 @@ class world {
   } // end function
   
   public function update(callable $afterAttackJob, callable $afterMoveJob): void {
+    $this->turn++;
+
     $ignoreFlags = [];
     for ($y = 0; $y < $this->height; $y++) {
       $ignoreFlags[$y] = [];
       for ($x = 0; $x < $this->width; $x++) {
         $ignoreFlags[$y][$x] = false;
       }
+    }
+
+    if ($this->turn % $this->spawnInterv == 0) {
+      $randomPos = null;
+      $retry     = 0;
+      do {
+        $retry++;
+        $randomPos = new coordinates(
+          $this->random->randomInt(1, $this->width  - 2),
+          $this->random->randomInt(1, $this->height - 2)
+        );
+      } while (
+        $this->map[$randomPos->y][$randomPos->x]->type !== entityType::road &&
+        $retry < 5
+      );
+
+      $this->spawnRandom(pos: $randomPos, except: [
+        entityType::unknown,
+        entityType::player,
+        entityType::road,
+        entityType::barrier,
+        entityType::tomb
+      ]);
     }
 
     for ($y = 0; $y < $this->height; $y++) {
@@ -708,46 +756,153 @@ class world {
         $actor    = $this->map[$y][$x];
         $actorPos = new coordinates($x, $y);
 
-        if ($this->handleAttack(
-          actorPos: $actorPos,
-          actor:    $actor,
-          targets:  $actor->interact($actorPos, $this)
-        )) {
-          //$this->waitFor(100000);
+        if ($actor->type === entityType::player) {
+          $this->handlePlayerInteraction($actorPos, $actor,
+            afterAttackJob: $afterAttackJob,
+            afterMoveJob:   $afterMoveJob,
+            ignoreFlags:    $ignoreFlags
+          );
+          continue;
         }
+        $this->handleEntityInteraction($actorPos, $actor,
+          afterAttackJob: $afterAttackJob,
+          afterMoveJob:   $afterMoveJob,
+          ignoreFlags:    $ignoreFlags
+        );
+      }
+    }
 
-        $afterAttackJob([
-          "info_1_key" => "Player HP",
-          "info_1_val" => $this->playerRef->hp
-        ]);
+    if ($this->isPlayerDead()) {
+      //$this->playerRef = null;
+    }
+  }
 
-        $nextPos = $actor->move($actorPos, $this);
-        if ($this->handleMove(
-          actorPos: $actorPos,
-          actor:    $actor,
-          nextPos:  $nextPos
-        )) {
-          $this->waitFor(100000);
-          $ignoreFlags[$nextPos->y][$nextPos->x] = true;
-        }
+  public function isPlayerDead(): bool {
+    if ($this->playerRef instanceof Player) {
+      if ($this->playerRef->hp <= 0) {
+        return true;
+      }
+    }
+    return false;
+  }
 
+  protected function handlePlayerInteraction(
+    coordinates $actorPos,
+    entity      $actor,
+    callable    $afterAttackJob,
+    callable    $afterMoveJob,
+    array      &$ignoreFlags
+  ): void {
+    if ($this->map[$actorPos->y][$actorPos->x] !== $actor) {
+      return;
+    }
+
+    $nextPos = $actor->move($actorPos, $this);
+    if ($nextPos === null) {
+      return;
+    }
+    if (!isset($this->map[$nextPos->y][$nextPos->x])) {
+      return;
+    }
+
+    $nextPosType = $this->map[$nextPos->y][$nextPos->x]->type;
+
+    if ($nextPosType == entityType::road) {
+      if ($this->handleMove(
+        actorPos: $actorPos,
+        actor:    $actor,
+        nextPos:  $nextPos
+      )) {
+        $ignoreFlags[$nextPos->y][$nextPos->x] = true;
         $afterMoveJob([
           "info_1_key" => "Player HP",
           "info_1_val" => $this->playerRef->hp
         ]);
       }
+      return;
     }
+
+    if (in_array($nextPosType, [
+      // can damage barrier and tomb
+      //entityType::barrier,
+      //entityType::tomb,
+      entityType::player,
+      entityType::unknown
+    ])) {
+      return;
+    }
+
+    if (in_array($nextPosType, [
+      entityType::ghost,
+      entityType::witch
+    ])) {
+      $this->handleAttack(
+        actor:    $actor,
+        targets:  [ $nextPos ]
+      );
+      return;
+    } else {
+      $this->handleAttack(
+        actor: $this->map[$nextPos->y][$nextPos->x],
+        targets: [ $actorPos ]
+      );
+      $this->handleAttack(
+        actor:    $actor,
+        targets:  [ $nextPos ]
+      );
+    }
+
+    $afterAttackJob([
+      "info_1_key" => "Player HP",
+      "info_1_val" => $this->playerRef->hp
+    ]);
   }
 
-  private function handleAttack(
+  protected function handleEntityInteraction(
     coordinates $actorPos,
     entity      $actor,
-    ?array      $targets     // coordinates[]|null
-  ): bool {
+    callable    $afterAttackJob,
+    callable    $afterMoveJob,
+    array      &$ignoreFlags
+  ): void{
+    if ($this->map[$actorPos->y][$actorPos->x] !== $actor) {
+      return;
+    }
+
+    $this->handleAttack(
+      actor:    $actor,
+      targets:  $actor->interact($actorPos, $this)
+    );
+
+    $afterAttackJob([
+      "info_1_key" => "Player HP",
+      "info_1_val" => $this->playerRef->hp
+    ]);
+
+    $nextPos = $actor->move($actorPos, $this);
+    if ($this->handleMove(
+      actorPos: $actorPos,
+      actor:    $actor,
+      nextPos:  $nextPos
+    )) {
+      $this->waitFor(100000);
+      $ignoreFlags[$nextPos->y][$nextPos->x] = true;
+    }
+
+    $afterMoveJob([
+      "info_1_key" => "Player HP",
+      "info_1_val" => $this->playerRef->hp
+    ]);
+  }
+
+  protected function handleAttack(entity $actor, ?array $targets): bool {
     if ($targets === null) {
       return false;
     }
-    if ($actor->damage === null) {
+    if (count($targets) == 0) {
+      return false;
+    }
+    if ($actor->damage  === null) {
       return false;
     }
 
@@ -763,25 +918,24 @@ class world {
       }
 
       // if target dead
-      $newTarget = match($target->type) {
+      match($target->type) {
         entityType::player,
-        entityType::witch    => entityFactory::create(entityType::tomb,    $target->id),
+        entityType::witch    => $this->spawn($targetPos, entityType::tomb, $target->id),
         entityType::barrier,
         entityType::tomb,
+        entityType::trap,
         entityType::ghost,
         entityType::apple,
         entityType::cure,
-        entityType::drug     => entityFactory::create(entityType::road,    $target->id),
-        default              => entityFactory::create(entityType::unknown, $target->id)
+        entityType::drug     => $this->spawn($targetPos, entityType::road,    $target->id),
+        default              => $this->spawn($targetPos, entityType::unknown, $target->id)
       };
-
-      $this->map[$targetPos->y][$targetPos->x] = $newTarget;
     }
 
     return true;
   }
 
-  private function handleMove(
+  protected function handleMove(
     coordinates  $actorPos,
     entity       $actor,
     ?coordinates $nextPos
@@ -793,6 +947,9 @@ class world {
       return false;
     }
     if (!isset($this->map[$nextPos->y][$nextPos->x])) {
+      return false;
+    }
+    if ($this->map[$nextPos->y][$nextPos->x]->type !== entityType::road) {
       return false;
     }
 
@@ -810,7 +967,7 @@ class world {
     return true;
   }
 
-  private function waitFor(int $microSec = 100000): void {
+  protected function waitFor(int $microSec = 100000): void {
     usleep($microSec);
   }
 }
@@ -999,6 +1156,7 @@ final class game {
       height:      (int)$mapHeight,
       spawnRate:   CONFIG_SPAWN_RATE,
       spawnMplier: CONFIG_SPAWN_MPILER,
+      spawnInterv: CONFIG_SPAWN_INTERV,
       entityIdLen: CONFIG_ENTITY_IDLEN
     );
 
@@ -1012,7 +1170,7 @@ final class game {
       $this->world->reset();
       //debug_zval_dump($this->world->getMap());
 
-      while (!$this->fin) {
+      while (!$this->fin && !$this->world->isPlayerDead()) {
         $this->world->update(
           afterAttackJob: function (array $additional = []): void {
             terminal::clear();
@@ -1044,14 +1202,10 @@ final class game {
       terminal::print(sprintf(
         "[%s] %s%sFile: %s:%d%sTrace:%s%s%s",
         get_class($e),
-        $e->getMessage(),
-        PHP_EOL,
+        $e->getMessage(),       PHP_EOL,
         $e->getFile(),
-        $e->getLine(),
-        PHP_EOL,
-        PHP_EOL,
-        $e->getTraceAsString(),
-        PHP_EOL
+        $e->getLine(),          PHP_EOL, PHP_EOL,
+        $e->getTraceAsString(), PHP_EOL
       ));
       return 1;
     } finally {
