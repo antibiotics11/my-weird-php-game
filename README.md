@@ -10,17 +10,19 @@ so the code quality is questionable and bugs are guaranteed.
 - d: move right
 
 ## run
+
+
 ```bash
-php -f v0.9.php
+php -f v1.0.php
 ```
 
 ### optional map size
 ```bash
-php -f v0.9.php 20 10
+php -f v1.0.php 20 10
 ```
 
 ## requirements
 - php >= 8.3
 
 ## screenshot
-![](https://github.com/user-attachments/assets/0868a657-e34b-49e8-9335-607504b0b872)
+<img width="640" height="352" alt="output" src="https://github.com/user-attachments/assets/e41350e9-8b31-4015-8e3f-24f45aab5784" />
