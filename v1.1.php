@@ -13,7 +13,7 @@ cli_set_process_title("my_weird_game_i");
 pcntl_async_signals(true);
 gc_enabled() or gc_enable();
 
-const CONFIG_TITLE_TEXT = "MY WEIRD PHP GAME I v0.9" . PHP_EOL .
+const CONFIG_TITLE_TEXT = "MY WEIRD PHP GAME I v1.1" . PHP_EOL .
                           "Made by ANTIBIOTICS";
 const CONFIG_MAP_HEIGHT = 15;
 const CONFIG_MAP_WIDTH  = 30;
@@ -337,6 +337,7 @@ final class ghost extends entity {
     parent::__construct(
       id:     $id,
       type:   entityType::ghost,
+      hp:     2,
       damage: 1
     );
   }
@@ -715,10 +716,21 @@ class world {
   
   public function update(callable $afterAttackJob, callable $afterMoveJob): void {
     $this->turn++;
+    $delayTotal = $this->width * $this->height / 100;
+    $delayCount = 1;
 
     $ignoreFlags = [];
     for ($y = 0; $y < $this->height; $y++) {
       $ignoreFlags[$y] = [];
+
+      if (
+        $delayCount <= $delayTotal &&
+        $y == (int)($this->height / $delayTotal * $delayCount)
+      ) {
+        $this->waitFor(20000);
+        $delayCount++;
+      }
+
       for ($x = 0; $x < $this->width; $x++) {
         $ignoreFlags[$y][$x] = false;
       }
@@ -885,7 +897,6 @@ class world {
       actor:    $actor,
       nextPos:  $nextPos
     )) {
-      $this->waitFor(100000);
       $ignoreFlags[$nextPos->y][$nextPos->x] = true;
     }
 
