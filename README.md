@@ -13,12 +13,12 @@ so the code quality is questionable and bugs are guaranteed.
 
 
 ```bash
-php -f v1.0.php
+php -f v1.1.php
 ```
 
 ### optional map size
 ```bash
-php -f v1.0.php 20 10
+php -f v1.1.php 20 10
 ```
 
 ## requirements
